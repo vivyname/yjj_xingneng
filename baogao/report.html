@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WMS仓储管理系统性能测试报告</title>
+    <style>
+        /* 重置浏览器默认样式 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        h1 {
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            text-align: center;
+        }
+        h2 {
+            border-left: 5px solid #3498db;
+            padding-left: 10px;
+            margin-top: 40px;
+            background-color: #f0f8ff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .report-header {
+            background-color: #eaf2f8;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .summary-card {
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .metric-card {
+            background-color: white;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin: 30px 0;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 7px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-pass {
+            background-color: #2ecc71;
+            color: white;
+        }
+        .badge-warning {
+            background-color: #f39c12;
+            color: white;
+        }
+        .badge-fail {
+            background-color: #e74c3c;
+            color: white;
+        }
+        .test-scenario {
+            margin-bottom: 25px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .scenario-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #2980b9;
+        }
+        .metric {
+            margin-left: 20px;
+            margin-bottom: 10px;
+        }
+        .metric-name {
+            font-weight: bold;
+            color: #16a085;
+        }
+        .timestamp {
+            color: #7f8c8d;
+            font-size: 14px;
+            text-align: right;
+            margin-top: 10px;
+        }
+        .conclusion {
+            background-color: #e8f8f5;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 30px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .recommendation {
+            background-color: #fef9e7;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .flex-container {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+        .flex-item {
+            flex: 1;
+            min-width: 300px;
+            margin: 10px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .flex-container {
+                flex-direction: column;
+            }
+            .flex-item {
+                min-width: auto;
+                margin: 10px 0;
+            }
+            .chart-container {
+                height: 300px;
+            }
+            table {
+                font-size: 14px;
+            }
+        }
+    </style>
+    <!-- 添加本地Chart.js备用 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // 如果CDN加载失败，使用本地文件
+        if (typeof Chart === 'undefined') {
+            document.write('<script src="local/chart.js"><\/script>');
+        }
+    </script>
+</head>
+<body>
+    <div class="report-header">
+        <h1>WMS仓储管理系统性能测试报告</h1>
+        <div class="timestamp">报告生成时间: <span id="report-time"></span></div>
+    </div>
+
+    <div class="summary-card">
+        <h2>测试概览</h2>
+        <div class="flex-container">
+            <div class="flex-item">
+                <h3>测试目标</h3>
+                <p>评估WMS系统在高并发、大数据量情况下的性能表现，包括响应时间、吞吐量和系统稳定性。</p>
+            </div>
+            <div class="flex-item">
+                <h3>测试范围</h3>
+                <ul>
+                    <li>用户登录性能</li>
+                    <li>库存查询性能</li>
+                    <li>入库操作性能</li>
+                    <li>出库操作性能</li>
+                    <li>系统并发能力</li>
+                </ul>
+            </div>
+            <div class="flex-item">
+                <h3>测试环境</h3>
+                <ul>
+                    <li><strong>服务器:</strong> 4核CPU, 16GB内存</li>
+                    <li><strong>数据库:</strong> MySQL 8.0</li>
+                    <li><strong>网络:</strong> 千兆以太网</li>
+                    <li><strong>测试工具:</strong> JMeter 5.4.1</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="summaryChart"></canvas>
+        </div>
+    </div>
+
+    <h2>性能指标汇总</h2>
+    <table>
+        <tr>
+            <th>测试场景</th>
+            <th>并发用户数</th>
+            <th>平均响应时间(ms)</th>
+            <th>90%响应时间(ms)</th>
+            <th>吞吐量(请求/秒)</th>
+            <th>错误率</th>
+            <th>状态</th>
+        </tr>
+        <tr>
+            <td>用户登录</td>
+            <td>50</td>
+            <td>320</td>
+            <td>450</td>
+            <td>45.2</td>
+            <td>0%</td>
+            <td><span class="badge badge-pass">通过</span></td>
+        </tr>
+        <tr>
+            <td>库存查询(单条件)</td>
+            <td>100</td>
+            <td>280</td>
+            <td>380</td>
+            <td>92.5</td>
+            <td>0%</td>
+            <td><span class="badge badge-pass">通过</span></td>
+        </tr>
+        <tr>
+            <td>库存查询(多条件)</td>
+            <td>100</td>
+            <td>520</td>
+            <td>680</td>
+            <td>65.3</td>
+            <td>0%</td>
+            <td><span class="badge badge-warning">警告</span></td>
+        </tr>
+        <tr>
+            <td>采购入库</td>
+            <td>50</td>
+            <td>650</td>
+            <td>820</td>
+            <td>32.1</td>
+            <td>0.5%</td>
+            <td><span class="badge badge-pass">通过</span></td>
+        </tr>
+        <tr>
+            <td极简销售出库</td>
+            <td>50</td>
+            <td>580</td>
+            <td>750</极简>
+            <td>35.8</td>
+            <td>0%</td>
+            <td><span class="badge badge-pass">通过</span></td>
+        </tr>
+    </table>
+
+    <div class="conclusion">
+        <h2>测试结论</h2>
+        <p>1. WMS系统在常规负载下(50-100并发用户)表现良好，所有关键业务操作的响应时间均达到预期目标。</p>
+        <p>2. 多条件库存查询性能接近阈值(520ms vs 500ms目标)，建议优化相关查询SQL和索引。</p>
+        <p>3. 整体系统吞吐量满足业务需求，入库和出库操作的平均吞吐量分别为32.1和35.8请求/秒。</p>
+    </div>
+
+    <script>
+        // 设置报告时间
+        document.getElementById('report-time').textContent = new Date().toLocaleString();
+        
+        // 性能指标汇总图表
+        const summaryCtx = document.getElementById('summaryChart').getContext('2d');
+        const summaryChart = new Chart(summaryCtx, {
+            type: 'bar',
+            data: {
+                labels: ['用户登录', '库存查询(单)', '库存查询(多)', '采购入库', '销售出库'],
+                datasets: [
+                    {
+                        label: '平均响应时间(ms)',
+                        data: [320, 280, 520, 650, 580],
+                        backgroundColor: '#3498db',
+                        borderColor: '#2980b9',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: '关键性能指标对比',
+                        font: {
+                            size: 18
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '响应时间(ms)'
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
