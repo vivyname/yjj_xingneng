@@ -1,0 +1,186 @@
+
+// 使用Jenkins Pipeline DSL定义持续集成流程 黑盒
+pipeline {
+    // 指定流水线运行的代理环境，这里使用任意可用代理
+    agent any
+    
+    // 定义环境变量，可用于所有阶段
+    environment {
+        // 使用凭据ID从Jenkins凭证库获取GitHub令牌
+        GITHUB_TOKEN = credentials('github-access-token')
+        // 定义应用版本号
+        APP_VERSION = '1.2.3'
+        // 定义自定义工具路径
+        CUSTOM_TOOLS = "${env.WORKSPACE}/tools"
+    }
+    
+    // 配置流水线触发条件
+    triggers {
+        // 每天凌晨2点轮询SCM（可替换为cron表达式）
+        pollSCM('H 2 * * *')
+        // 允许上游项目触发构建
+        upstream(upstreamProjects: 'base-pipeline', threshold: hudson.model.Result.SUCCESS)
+    }
+    
+    // 参数化构建，允许用户输入参数
+    parameters {
+        // 字符串参数
+        string(name: 'DEPLOY_ENV', defaultValue: 'staging', description: '部署环境')
+        // 选择参数
+        choice(name: 'BUILD_TYPE', choices: ['Release', 'Debug'], description: '构建类型')
+        // 布尔参数
+        booleanParam(name: 'RUN_TESTS', defaultValue: true, description: '是否执行测试')
+    }
+    
+    // 工具配置，自动安装并加入PATH
+    tools {
+        // 指定Maven版本（需在Jenkins全局配置中预定义）
+        maven 'Maven-3.6.3'
+        // 指定JDK版本（需在Jenkins全局配置中预定义）
+        jdk 'OpenJDK-11'
+    }
+    
+    // 流水线阶段定义
+    stages {
+        // 代码检出阶段
+        stage('Checkout') {
+            steps {
+                // 从Git仓库检出代码，使用凭据认证
+                git branch: 'main',
+                    credentialsId: 'git-creds',
+                    url: 'https://github.com/your-org/your-repo.git'
+            }
+        }
+        
+        // 代码质量检查阶段
+        stage('Static Analysis') {
+            steps {
+                // 使用SonarQube进行代码分析
+                withSonarQubeEnv('sonar-server') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+            // 后置条件：仅当代码变更时执行
+            when { 
+                changed() 
+            }
+        }
+        
+        // 依赖构建阶段
+        stage('Build Dependencies') {
+            // 并行执行多个任务
+            parallel {
+                // 子任务1：构建核心组件
+                stage('Build Core') {
+                    steps {
+                        sh 'mvn clean compile -pl core-module'
+                    }
+                }
+                // 子任务2：构建Web组件
+                stage('Build Web') {
+                    steps {
+                        sh 'mvn clean compile -pl web-module'
+                    }
+                }
+            }
+        }
+        
+        // 测试阶段（条件执行）
+        stage('Test') {
+            // 仅当参数RUN_TESTS为true时执行
+            when {
+                expression { params.RUN_TESTS }
+            }
+            steps {
+                // 执行测试并生成报告，设置超时时间
+                timeout(time: 30, unit: 'MINUTES') {
+                    // 使用重试机制（最多3次）
+                    retry(3) {
+                        sh 'mvn test -DskipTests=false'
+                    }
+                }
+            }
+            // 后处理：无论成功失败都发布测试报告
+            post {
+                always {
+                    junit '**/target/surefire-reports/*.xml'
+                }
+            }
+        }
+        
+        // 构建阶段
+        stage('Build') {
+            steps {
+                // 执行Maven打包
+                sh 'mvn package -Dmaven.test.skip=true'
+                // 归档构建产物
+                archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true
+            }
+        }
+        
+        // 人工审核阶段（仅预生产环境）
+        stage('Approval') {
+            // 仅当部署环境为preprod时执行
+            when {
+                expression { params.DEPLOY_ENV == 'preprod' }
+            }
+            steps {
+                // 等待人工确认（超时2小时）
+                timeout(time: 2, unit: 'HOURS') {
+                    input message: '部署到预生产环境？', ok: '确认'
+                }
+            }
+        }
+        
+        // 部署阶段
+        stage('Deploy') {
+            steps {
+                // 根据参数选择部署环境
+                script {
+                    switch(params.DEPLOY_ENV) {
+                        case 'staging':
+                            // 调用自定义部署脚本
+                            sh "./deploy.sh --env staging --version ${APP_VERSION}"
+                            break
+                        case 'preprod':
+                            // 使用Kubernetes部署
+                            withKubeConfig([credentialsId: 'k8s-creds']) {
+                                sh "kubectl set image deployment/app *=your-registry/app:${APP_VERSION}"
+                            }
+                            break
+                        case 'production':
+                            // 使用Ansible部署
+                            withCredentials([sshUserPrivateKey(credentialsId: 'prod-ssh', keyFileVariable: 'SSH_KEY')]) {
+                                sh "ansible-playbook -i prod deploy.yml --extra-vars version=${APP_VERSION}"
+                            }
+                            break
+                    }
+                }
+            }
+        }
+    }
+    
+    // 流水线后处理（全局）
+    post {
+        // 构建成功时发送通知
+        success {
+            emailext subject: '构建成功',
+                     body: '项目构建完成，详情请查看：${BUILD_URL}',
+                     to: 'dev-team@company.com'
+        }
+        // 构建失败时执行
+        failure {
+            slackSend channel: '#build-failures',
+                      message: "警告：构建失败 - ${currentBuild.fullDisplayName}"
+        }
+        // 总是执行的清理操作
+        always {
+            script {
+                // 清理工作空间
+                cleanWs()
+                // 记录构建指标
+                currentBuild.description = "Version ${APP_VERSION} | Env: ${params.DEPLOY_ENV}"
+            }
+        }
+    }
+}

@@ -1,0 +1,118 @@
+pipeline {
+    agent any
+    
+    environment {
+        // 配置 Soar 环境变量
+        SOAR_PATH = '/opt/soar/soar'  // Soar 可执行文件路径
+        SOAR_CONFIG = '/opt/soar/soar.yaml'  // Soar 配置文件路径
+        GIT_REPO = 'https://github.com/your-repo/sql-repo.git'  // 包含 SQL 文件的仓库
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                // 检出代码仓库
+                git branch: 'main', url: "${GIT_REPO}"
+            }
+        }
+        
+        stage('SQL Analysis with Soar') {
+            steps {
+                script {
+                    // 查找所有 SQL 文件
+                    def sqlFiles = findFiles(glob: '**/*.sql')
+                    
+                    if (sqlFiles.size() == 0) {
+                        echo '没有找到 SQL 文件，跳过分析'
+                        return
+                    }
+                    
+                    // 创建报告目录
+                    sh 'mkdir -p soar_reports'
+                    
+                    // 对每个 SQL 文件运行 Soar 分析
+                    sqlFiles.each { file ->
+                        def fileName = file.name
+                        def reportFile = "soar_reports/${fileName}.report"
+                        
+                        echo "正在分析 SQL 文件: ${fileName}"
+                        
+                        // 执行 Soar 分析
+                        sh """
+                            ${SOAR_PATH} -config ${SOAR_CONFIG} \
+                            -query "${file.path}" \
+                            -report-type md \
+                            -report-output ${reportFile}
+                        """
+                        
+                        // 检查报告内容
+                        def reportContent = readFile(reportFile)
+                        
+                        // 解析报告中的问题数量
+                        def issueCount = reportContent.count('###')
+                        
+                        if (issueCount > 0) {
+                            echo "发现 ${issueCount} 个潜在问题，请查看报告: ${reportFile}"
+                            // 可以将报告归档为制品
+                            archiveArtifacts artifacts: "${reportFile}", fingerprint: true
+                        } else {
+                            echo "SQL 文件 ${fileName} 分析通过，未发现问题"
+                        }
+                    }
+                }
+            }
+            
+            post {
+                always {
+                    // 发布 HTML 报告（如果有）
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'soar_reports',
+                        reportFiles: '*.report',
+                        reportName: 'Soar SQL Analysis Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('Quality Gate') {
+            steps {
+                script {
+                    // 检查是否有严重问题
+                    def allReports = findFiles(glob: 'soar_reports/*.report')
+                    def criticalIssues = 0
+                    
+                    allReports.each { report ->
+                        def content = readFile(report.path)
+                        // 这里可以根据 Soar 报告中的严重程度进行判断
+                        if (content.contains('严重') || content.contains('Critical')) {
+                            criticalIssues++
+                        }
+                    }
+                    
+                    if (criticalIssues > 0) {
+                        error "发现 ${criticalIssues} 个严重 SQL 问题，构建失败"
+                    } else {
+                        echo 'SQL 质量检查通过'
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // 清理工作空间
+            cleanWs()
+        }
+        
+        failure {
+            // 构建失败时发送通知
+            mail to: 'team@example.com',
+                 subject: "SQL 质量检查失败 - ${currentBuild.fullDisplayName}",
+                 body: "构建 ${env.BUILD_URL} 失败，请检查 Soar 报告"
+        }
+    }
+}
